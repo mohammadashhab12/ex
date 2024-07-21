@@ -5,72 +5,77 @@ from app.dependecies import (
     get_admin_user_service,
     get_regular_user_service,
     get_user_retrieval_service,
-    get_user_profile_update_service,
-    delete_user_service
+    get_user_profile_update_service
 )
-from app.config import config
-from app.services.in_memory_user_service import InMemoryUserService
+from app.pycommon.app_config.config import ConfigSingleton
+from app.pycommon.api_exception.exceptions import UserAlreadyExistsException, UserNotFoundException, MaxAdminUsersReachedException
 
 app = FastAPI()
+config = ConfigSingleton.get_instance()
 
 
 @app.post("/user/")
 def create_user(user: User, service=Depends(get_user_service)):
     try:
         return service.create_user(user)
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
+    except UserAlreadyExistsException as e:
+        raise HTTPException(status_code=400, detail=f"User with username '{e.username}' already exists")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.post("/admin_user/")
 def create_admin_user(user: AdminUser, service=Depends(get_admin_user_service)):
-    # Check max admin users limit
-    if isinstance(service, InMemoryUserService):
-        current_admins = [key for key in service.users if isinstance(service.users[key], AdminUser)]
-    else:
-        current_admins = [key for key in service.redis_client.keys() if key.startswith('admin')]
-
-    if len(current_admins) >= config.MAX_ADMIN_USERS:
-        raise HTTPException(status_code=400, detail="Maximum number of admin users reached")
-
+    # if service.get_admin_user_count() >= ConfigSingleton.get_instance().MAX_ADMIN_USERS:
     try:
+        if service.get_admin_user_count() >= ConfigSingleton.get_instance().MAX_ADMIN_USERS:
+            raise MaxAdminUsersReachedException()
         return service.create_user(user)
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
+    except MaxAdminUsersReachedException:
+        raise HTTPException(status_code=400, detail="Maximum number of admin users reached")
+    except UserAlreadyExistsException as e:
+        raise HTTPException(status_code=400, detail=f"User with username '{e.username}' already exists")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.post("/regular_user/")
 def create_regular_user(user: RegularUser, service=Depends(get_regular_user_service)):
     try:
         return service.create_user(user)
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
+    except UserAlreadyExistsException as e:
+        raise HTTPException(status_code=400, detail=f"User with username '{e.username}' already exists")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.get("/user/{username}")
 def get_user(username: str, service=Depends(get_user_retrieval_service)):
     try:
         return service.get_user(username)
-    except ValueError as e:
-        raise HTTPException(status_code=404, detail=str(e))
+    except UserNotFoundException as e:
+        raise HTTPException(status_code=404, detail=f"User with username '{e.username}' not found")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.put("/user/{username}")
 def update_user(username: str, updates: dict, service=Depends(get_user_profile_update_service)):
     try:
         return service.update_user(username, updates)
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
-
+    except UserNotFoundException as e:
+        raise HTTPException(status_code=404, detail=f"User with username '{e.username}' not found")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 @app.delete("/user/{username}")
-def delete_user(username: str, delete_user_service=Depends(delete_user_service)):
+def delete_user(username: str, service=Depends(get_user_service)):
     try:
-        delete_user_service(username)
-    except ValueError as e:
-        raise HTTPException(status_code=404, detail=str(e))
-
-    return {"message": "User deleted successfully"}
+        return service.delete_user(username)
+    except UserNotFoundException as e:
+        raise HTTPException(status_code=404, detail=f"User with username '{e.username}' not found")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.get("/")
